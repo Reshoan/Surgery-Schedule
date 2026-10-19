@@ -33,3 +33,21 @@ Status is one of: Proposed, Accepted, Superseded by ADR-N.
 - **Date:** 2026-10-19 · **Status:** Proposed
 - **Context:** Trust. Wrong autonomous messages to patients are costly.
 - **Decision:** Every autonomous policy has a mode: `off`, `suggest` (the doctor approves) or `auto`.
+
+## ADR-006: Bangladesh as launch market
+- **Date:** 2026-10-19 · **Status:** Accepted
+- **Context:** The first user operates in Bangladesh, at one location.
+- **Decision:** Timezone `Asia/Dhaka`. `+880` phone numbers. Bangla and English templates. A local SMS gateway as primary provider. Host in the Singapore region.
+- **Consequences:** Sender-ID registration lead time. Bangla SMS costs more parts per message. SMS text must make sense without a link, for feature-phone users.
+
+## ADR-007: Role-based access (doctor, assistant)
+- **Date:** 2026-10-19 · **Status:** Accepted
+- **Context:** The doctor's assistant needs access to run day-to-day logistics.
+- **Decision:** A `staff` table with roles and per-permission overrides. The doctor controls settings and staff. The assistant manages schedule and patients and can send signals on the doctor's behalf. Every action records its actor.
+- **Consequences:** Authorization checks (Postgres row-level security) are needed from Phase 1.
+
+## ADR-008: Doctor-configurable procedures with protocol snapshots
+- **Date:** 2026-10-19 · **Status:** Accepted
+- **Context:** Procedure types and follow-up schedules must not be fixed in code. The doctor edits them.
+- **Decision:** Procedures and protocols are data, editable in-app, archived instead of deleted. Each surgery booking stores a frozen JSON snapshot of its protocol.
+- **Consequences:** Edits never silently reshuffle existing patients' follow-ups. Re-planning an existing patient is an explicit action.

@@ -6,8 +6,10 @@
 
 An appointment system that **runs the logistics by itself**. The doctor makes clinical decisions and taps a button now and then. The system handles delays, rescheduling, follow-up planning and patient communication.
 
-**First user:** a surgeon who operates on Fridays and Saturdays, outside his regular practice.
+**First user:** a surgeon in **Bangladesh** who operates on Fridays and Saturdays at **one location**, outside his regular practice. His **assistant** also uses the system.
 **Later:** patients get their own view, then other doctors and clinics.
+
+**Locale:** timezone `Asia/Dhaka` (UTC+6, no daylight saving). Phone numbers in `+880` format. UI and SMS in Bangla and English.
 
 ## 2. Core concepts
 
@@ -39,13 +41,38 @@ Each behaviour is a rule that can be configured, not hard-coded:
 | Follow-up tolerance | Each follow-up has a window (e.g. 1 month ± 5 days) |
 
 ### 2.4 Procedure templates and follow-up protocols
+**Nothing here is hard-coded.** The doctor creates, edits and archives procedure types and their follow-up protocols in a settings screen. The app ships with no fixed list.
+
 Each procedure type has:
 - typical duration (plus buffer)
 - a **follow-up protocol**, e.g. Operation A means 3 check-ups at +1, +2 and +3 months, each with a ±N-day window and a check-up duration
 
 After a surgery is marked done (or booked), the scheduler **proposes the whole follow-up chain**. For each visit it finds the best free slot inside the window. If the window is full, it **suggests the nearest slot outside the window** and flags it for the doctor to approve.
 
-### 2.5 Everything is an event
+**Editing a procedure never changes existing patients' plans.** When a surgery is booked, the system saves a *snapshot* of that procedure's protocol with the appointment. Later edits apply only to new bookings. The doctor can still re-plan a specific patient by hand.
+
+Protocol editor needs:
+- offsets in days, weeks or months ("every 2 weeks", "monthly ×3")
+- number of follow-ups
+- tolerance window per step
+- check-up duration
+- an optional note per step ("remove stitches")
+
+### 2.5 Roles: doctor and assistant
+| Action | Doctor | Assistant |
+|---|---|---|
+| View schedule, book/move/cancel appointments | ✅ | ✅ |
+| Manage patients | ✅ | ✅ |
+| Send "doctor running late" / "arrived" signals | ✅ | ✅ (on the doctor's behalf) |
+| Approve suggestions in "suggest" mode | ✅ | ✅ (configurable) |
+| Edit procedures, protocols, availability, policies | ✅ | ❌ by default (doctor can grant) |
+| Invite or remove staff | ✅ | ❌ |
+
+Every action records **who** did it, so the audit trail shows whether the doctor, the assistant or the system made a change.
+
+The assistant is also the **human fallback** for the autonomy. Patients who don't respond to SMS or links (for example on feature phones) show up in an "Needs a call" list for the assistant.
+
+### 2.6 Everything is an event
 Every change ("doctor late 30m", "patient chose reschedule", "SMS delivered") is stored as an event. That gives:
 - an **audit trail**, which medical software needs
 - the project record of *what the system did and why* ("SMS sent because projected start moved +34 min")
@@ -64,13 +91,21 @@ Guiding principle: **one language and as few moving parts as possible.** Lean on
 | Realtime | **Supabase Realtime** | The dashboard updates instantly when anything changes, with no polling |
 | Auth | Supabase Auth: email or passkey for doctors, **signed magic links** for patients | Patients need no account. The SMS link is their access. |
 | Autonomy engine | **Inngest** (durable workflows) | Built for "send SMS, then *wait up to 15 min for a reply*, else default". It has durable sleeps, `waitForEvent`, retries and idempotency. Workflows survive restarts and deploys. |
-| SMS | Provider adapter: a **local aggregator** for the main country, Twilio as fallback | Local gateways are much cheaper and have better delivery. Keep it behind an interface so providers can be swapped. |
+| SMS | Provider adapter with a **Bangladeshi SMS gateway** as primary (see §3.1) | Local gateways are far cheaper than Twilio for `+880` numbers and deliver better. Keep it behind an interface so providers can be swapped. |
 | Scheduling core | Plain TypeScript **pure functions** with heavy unit tests | For one doctor's calendar, a greedy slot-finder with scoring is enough. No solver is needed yet. |
-| Hosting | Vercel (app) + Supabase (DB) + Inngest Cloud | Atomic deploys with instant rollback. Managed Postgres with point-in-time recovery. Nothing to babysit. |
+| Hosting | Vercel (app) + Supabase (DB) + Inngest Cloud, in the **Singapore region** | Closest major region to Bangladesh, so the app feels fast. Atomic deploys with instant rollback. Managed Postgres with point-in-time recovery. Nothing to babysit. |
 | Monitoring | Sentry (errors) + an uptime check + a dead-letter alert for SMS that failed to send | You learn about failures before patients do |
 | Testing | Vitest (scheduler logic), Playwright (key flows) | The scheduler and policies are where bugs hurt most |
 
-### Alternatives considered
+### 3.1 Bangladesh specifics
+- **SMS gateway.** Compare local providers (e.g. SSL Wireless, Alpha SMS, BulkSMSBD, MiMSMS) on price, API quality, delivery reports and reliability before Phase 3. Test real delivery to Grameenphone, Robi, Banglalink and Teletalk numbers.
+- **Sender ID.** A branded sender name ("masking") needs registration through the gateway and takes time. Start the paperwork early. Non-masking (sent from a number) is cheaper and works for a pilot.
+- **Bangla SMS cost.** Unicode SMS fits about 70 characters per part, versus 160 for English. Keep Bangla templates short, or a single message can cost 2–3 parts.
+- **Feature phones.** Not every patient can open a link. Every SMS must make sense on its own ("Dr. X is running ~30 min late. New time ≈ 5:30 PM."). The link is only for actions. Patients who don't act are passed to the assistant (§2.5).
+- **Privacy.** Follow Bangladesh's data-protection rules as they stand at launch. Check their current status before onboarding real patients.
+- **Payments (later).** If billing other doctors ever matters, bKash or SSLCommerz, not Stripe.
+
+### 3.2 Alternatives considered
 - **Self-hosted Postgres + Graphile Worker/pg-boss** instead of Supabase + Inngest. Cheaper at scale, with no vendor lock-in. Costs more ops work. A reasonable later migration because it is all still Postgres.
 - **Temporal** for workflows. More powerful, but heavy for one person.
 - **React Native / Expo app.** Not needed at first. A PWA plus SMS links reaches every patient without an install. Revisit when push notifications to patients matter.
@@ -112,13 +147,17 @@ Realistic target: 99.9%+ for the app, and **no lost or duplicated notifications*
 ```
 clinics            (multi-tenant from day 1, cheap now, painful to add later)
 doctors            -> clinic
+staff              (user, clinic, role: doctor|assistant, permissions)
 availability       (doctor, weekday, start, end; e.g. Fri/Sat sessions)
 availability_exceptions (holidays, one-off changes)
-procedure_types    (name, duration, buffer)
-followup_protocols (procedure_type, step #, offset, window_before, window_after, duration)
+procedure_types    (name, duration, buffer, archived_at)       <- doctor-editable
+followup_protocols (procedure_type, step #, offset + unit (days|weeks|months),
+                    window_before, window_after, duration, note) <- doctor-editable
 patients           (name, phone, language preference)
 appointments       (doctor, patient, type: surgery|followup, procedure_type,
-                    scheduled_range tstzrange, projected_at, status, parent_appointment_id)
+                    protocol_snapshot jsonb,   <- frozen copy at booking time
+                    scheduled_range tstzrange, projected_at, status, parent_appointment_id,
+                    created_by)
                     EXCLUDE USING gist (doctor_id WITH =, scheduled_range WITH &&)
 day_sessions       (doctor, date, actual_arrival, state)
 events             (append-only: what happened, who/what caused it, payload)
@@ -134,9 +173,9 @@ Each phase ends with something the doctor can actually use.
 | Phase | Deliverable | Done when |
 |---|---|---|
 | **0. Foundations** | Repo, docs, CI, Supabase project, deploy pipeline, empty app live | A deploy to prod works and can be rolled back |
-| **1. Manual scheduling** | Doctor login, Fri/Sat availability, procedure types, patient list, book/move/cancel, day and week view (realtime) | Dad uses it instead of paper or his current method for one weekend |
-| **2. Follow-up autopilot** | Protocols per procedure, auto-proposed follow-up chains, conflict suggestions | Booking a surgery generates the full follow-up plan |
-| **3. SMS basics** | Provider adapter, confirmations and reminders, delivery tracking, Bangla/English templates | Patients get reliable reminders |
+| **1. Manual scheduling** | Doctor and assistant logins with roles, Fri/Sat availability, **procedure types editor**, patient list, book/move/cancel, day and week view (realtime) | Dad and his assistant use it instead of their current method for one weekend |
+| **2. Follow-up autopilot** | **Follow-up protocol editor**, auto-proposed follow-up chains, protocol snapshots, conflict suggestions | Booking a surgery generates the full follow-up plan from protocols dad defined himself |
+| **3. SMS basics** | Bangladeshi gateway adapter, confirmations and reminders, delivery tracking, Bangla/English templates, "Needs a call" list for the assistant | Patients get reliable reminders |
 | **4. Live day mode** | One-tap doctor signals, projected times, delay SMS with Wait/Reschedule link | A late arrival notifies patients without anyone lifting a finger |
 | **5. Early-offer cascade** | Slot-release offers, atomic acceptance, expiry | A reschedule auto-fills from the queue |
 | **6. Patient portal** | Magic-link page: my appointments, live status, follow-up plan, reschedule | Patients self-serve |
@@ -145,13 +184,19 @@ Each phase ends with something the doctor can actually use.
 
 ## 7. Risks and open questions
 
-**Open questions (need answers before Phase 1 and Phase 3):**
-1. **Country and SMS provider.** The Fri/Sat weekend suggests Bangladesh or the Gulf. This decides the SMS provider, sender-ID rules, Unicode (Bangla) SMS cost, and data-protection rules.
-2. Does dad have an **assistant** who should also have access?
-3. How does booking happen today: phone calls, walk-ins, referrals? Who enters patients into the system?
-4. What are the real procedures, durations and follow-up protocols? Get the list from dad. It becomes the seed data.
-5. Are surgeries at one location or several hospitals? This affects travel time and buffers.
-6. Can patients reply to SMS, or only tap links? **Links are more reliable.** Two-way SMS needs extra setup in many countries.
+**Answered (2026-10-19):**
+- Country: **Bangladesh**. See §3.1.
+- Assistant: **yes**, with their own login. See §2.5.
+- Locations: **one**. No travel-time logic needed. (`clinics` still allows more later.)
+- Procedures: **set by the doctor in the app**, not hard-coded. See §2.4.
+
+**Still open (to discuss with dad):**
+1. How does booking happen today: phone calls, walk-ins, referrals? Who enters patients: dad, the assistant or both?
+2. What should the assistant **not** be able to do or see? Check the defaults in §2.5.
+3. Roughly what share of patients use smartphones versus feature phones? This decides how much we rely on links.
+4. How late does he typically run, and how far ahead should patients be told? This sets the default policy thresholds.
+5. Bangla, English, or both in SMS? Per patient?
+6. A few example procedures with their follow-up schedules, so the protocol editor can be tested against real cases.
 
 **Risks:**
 - **Medical privacy.** Keep diagnoses and procedure names *out of SMS*. Use "your appointment with Dr. X". Encrypt at rest, keep an audit log, and give patients signed, expiring links.
