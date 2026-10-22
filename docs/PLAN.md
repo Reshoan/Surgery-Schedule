@@ -1,6 +1,6 @@
 # Surgery Schedule: Project Plan
 
-> Working name. Status: **Planning** (2026-10-19)
+> Working name. Status: **Planning** (last updated 2026-10-22)
 
 ## 1. Vision
 
@@ -34,7 +34,7 @@ Missing signals are signals too. If the doctor hasn't tapped "Arrived" 10 minute
 Each behaviour is a rule that can be configured, not hard-coded:
 | Policy | Example default |
 |---|---|
-| Delay notify threshold | Notify a patient if `projected_at` slips more than 20 min |
+| Delay notify threshold | Notify a patient if `projected_at` slips more than 20 min. Because the doctor's lateness varies a lot, projections come from **live signals**, not historical averages. |
 | Hysteresis | Don't re-notify unless it moves another 15 min (avoid SMS spam) |
 | Patient response window | Wait 15 min for "wait / reschedule"; default = wait |
 | Early-offer | When a slot opens, offer it to the next patients in order; first to accept wins; offer expires in 10 min |
@@ -62,11 +62,16 @@ Protocol editor needs:
 | Action | Doctor | Assistant |
 |---|---|---|
 | View schedule, book/move/cancel appointments | ✅ | ✅ |
-| Manage patients | ✅ | ✅ |
+| Register a new patient (name, phone) | ✅ | ✅ |
+| **Change an existing patient's contact info** (phone, etc.) | ✅ | ❌ **never** |
+| Choose procedure type when booking | ✅ | ✅ (only from the doctor's list) |
+| **Create, edit or archive procedure types and protocols** | ✅ | ❌ **never** |
 | Send "doctor running late" / "arrived" signals | ✅ | ✅ (on the doctor's behalf) |
 | Approve suggestions in "suggest" mode | ✅ | ✅ (configurable) |
-| Edit procedures, protocols, availability, policies | ✅ | ❌ by default (doctor can grant) |
+| Edit availability and policies | ✅ | ❌ by default (doctor can grant) |
 | Invite or remove staff | ✅ | ❌ |
+
+The two "never" rows are hard rules enforced in the database (row-level security), not just hidden buttons. If a patient's number changes, the assistant flags it and the doctor makes the change. Contact changes are logged with old and new values, because a wrong number means delay SMS reach the wrong person.
 
 Every action records **who** did it, so the audit trail shows whether the doctor, the assistant or the system made a change.
 
@@ -100,8 +105,12 @@ Guiding principle: **one language and as few moving parts as possible.** Lean on
 ### 3.1 Bangladesh specifics
 - **SMS gateway.** Compare local providers (e.g. SSL Wireless, Alpha SMS, BulkSMSBD, MiMSMS) on price, API quality, delivery reports and reliability before Phase 3. Test real delivery to Grameenphone, Robi, Banglalink and Teletalk numbers.
 - **Sender ID.** A branded sender name ("masking") needs registration through the gateway and takes time. Start the paperwork early. Non-masking (sent from a number) is cheaper and works for a pilot.
-- **Bangla SMS cost.** Unicode SMS fits about 70 characters per part, versus 160 for English. Keep Bangla templates short, or a single message can cost 2–3 parts.
-- **Feature phones.** Not every patient can open a link. Every SMS must make sense on its own ("Dr. X is running ~30 min late. New time ≈ 5:30 PM."). The link is only for actions. Patients who don't act are passed to the assistant (§2.5).
+- **Bilingual SMS (Bangla + English).** Every message carries both languages. Any Bangla character makes the whole SMS Unicode, at about 70 characters per part (versus 160 for English only). A bilingual message will typically cost **3–4 parts**. Templates must be written tightly and costs budgeted per message. A per-patient "single language" option can be added later to cut cost.
+- **SMS is the primary channel, not a fallback (ADR-009).** Smartphones can't be assumed, so every flow must work on a basic phone:
+  - Every SMS makes sense on its own ("Dr. X is running ~30 min late. New time ≈ 5:30 PM.").
+  - Patients answer by **replying with a number** (e.g. `1` = wait, `2` = reschedule). This needs a gateway with **inbound SMS** (a long number or shortcode). That becomes a must-have when choosing the gateway.
+  - Links are an extra for smartphone users, never the only way to respond.
+  - No reply within the window: the default applies (wait), and the patient appears on the assistant's "Needs a call" list (§2.5).
 - **Privacy.** Follow Bangladesh's data-protection rules as they stand at launch. Check their current status before onboarding real patients.
 - **Payments (later).** If billing other doctors ever matters, bKash or SSLCommerz, not Stripe.
 
@@ -126,9 +135,10 @@ Realistic target: 99.9%+ for the app, and **no lost or duplicated notifications*
 ### Flow A: Doctor is late
 1. Doctor taps "Running late +30" (or misses the arrival check-in and the system asks him).
 2. The system recomputes `projected_at` for the whole day's queue.
-3. For each patient whose delay is over the threshold: SMS with the new estimated time and a link offering **Wait** or **Reschedule**.
-4. Workflow waits for the response (timeout = Wait).
-5. If someone chooses Reschedule: they get slot suggestions, and the freed slot triggers Flow B.
+3. For each patient whose delay is over the threshold: bilingual SMS with the new estimated time. "Reply 1 to wait, 2 to reschedule." Smartphone users also get a link.
+4. Workflow waits for the response (timeout = Wait, and the patient goes on the "Needs a call" list).
+5. Because lateness is unpredictable, later patients get a softer message first ("Dr. X is running late, we'll update you"). They get an exact time once the estimate settles, so they aren't sent several conflicting times.
+6. If someone chooses Reschedule: they get slot suggestions (by SMS: "Reply A for Fri 6:00, B for Sat 5:00"), and the freed slot triggers Flow B.
 
 ### Flow B: Slot frees up (early-offer cascade)
 1. Slot opens (cancellation, reschedule or no-show).
@@ -175,7 +185,7 @@ Each phase ends with something the doctor can actually use.
 | **0. Foundations** | Repo, docs, CI, Supabase project, deploy pipeline, empty app live | A deploy to prod works and can be rolled back |
 | **1. Manual scheduling** | Doctor and assistant logins with roles, Fri/Sat availability, **procedure types editor**, patient list, book/move/cancel, day and week view (realtime) | Dad and his assistant use it instead of their current method for one weekend |
 | **2. Follow-up autopilot** | **Follow-up protocol editor**, auto-proposed follow-up chains, protocol snapshots, conflict suggestions | Booking a surgery generates the full follow-up plan from protocols dad defined himself |
-| **3. SMS basics** | Bangladeshi gateway adapter, confirmations and reminders, delivery tracking, Bangla/English templates, "Needs a call" list for the assistant | Patients get reliable reminders |
+| **3. SMS basics** | Bangladeshi gateway adapter (**outbound and inbound**), bilingual templates, confirmations and reminders, delivery tracking, reply-number parsing, "Needs a call" list for the assistant | Patients on basic phones get reliable reminders and can reply |
 | **4. Live day mode** | One-tap doctor signals, projected times, delay SMS with Wait/Reschedule link | A late arrival notifies patients without anyone lifting a finger |
 | **5. Early-offer cascade** | Slot-release offers, atomic acceptance, expiry | A reschedule auto-fills from the queue |
 | **6. Patient portal** | Magic-link page: my appointments, live status, follow-up plan, reschedule | Patients self-serve |
@@ -190,13 +200,17 @@ Each phase ends with something the doctor can actually use.
 - Locations: **one**. No travel-time logic needed. (`clinics` still allows more later.)
 - Procedures: **set by the doctor in the app**, not hard-coded. See §2.4.
 
-**Still open (to discuss with dad):**
-1. How does booking happen today: phone calls, walk-ins, referrals? Who enters patients: dad, the assistant or both?
-2. What should the assistant **not** be able to do or see? Check the defaults in §2.5.
-3. Roughly what share of patients use smartphones versus feature phones? This decides how much we rely on links.
-4. How late does he typically run, and how far ahead should patients be told? This sets the default policy thresholds.
-5. Bangla, English, or both in SMS? Per patient?
-6. A few example procedures with their follow-up schedules, so the protocol editor can be tested against real cases.
+**Answered (2026-10-22):**
+- Who books: **both** dad and the assistant.
+- Assistant restrictions: **cannot define operation types** and **cannot change patient contact info**. See §2.5.
+- Phones: **assume SMS only**. Smartphones are not a given. See §3.1 and ADR-009.
+- Lateness: **varies every time**. Projections rely on live signals, and messages are staged (Flow A).
+- Language: **both Bangla and English** in every SMS. See §3.1 for the cost impact.
+- Real procedure data: **not available yet**. Development uses made-up sample procedures. Dad enters the real ones himself through the editor.
+
+**Still open:**
+1. Is the bilingual SMS cost (about 3–4 parts per message) acceptable, or should each patient get a single language? Decide once gateway prices are known.
+2. How long should patients have to reply before the default applies? Using 15 min for now.
 
 **Risks:**
 - **Medical privacy.** Keep diagnoses and procedure names *out of SMS*. Use "your appointment with Dr. X". Encrypt at rest, keep an audit log, and give patients signed, expiring links.

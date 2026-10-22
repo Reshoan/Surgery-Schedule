@@ -4,6 +4,22 @@ Newest entries at the top. Each entry: what was done, decisions made, what's nex
 
 ---
 
+## 2026-10-22: Answers from dad
+**Decided**
+- Dad and the assistant both book appointments.
+- The assistant can never define operation types or change patient contact info (ADR-010).
+- SMS-first design: patients reply with numbers. Links are optional. Gateway must support inbound SMS (ADR-009, supersedes ADR-004).
+- Every SMS is bilingual (Bangla + English).
+- Lateness varies, so projections use live signals, and delay messages are staged (soft notice first, exact time later).
+- No real procedure data yet. Sample data will be used for development.
+
+**Updated**
+- `docs/PLAN.md`: roles table, policies, Flow A, §3.1 Bangladesh specifics, Phase 3, open questions.
+
+**Next**
+- Shortlist Bangladeshi SMS gateways **with inbound SMS support** and get Unicode pricing.
+- Start Phase 0 (scaffold app, Supabase, CI, first deploy).
+
 ## 2026-10-19: Requirements update
 **Decided**
 - Launch market is **Bangladesh** (ADR-006).

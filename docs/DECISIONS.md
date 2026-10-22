@@ -24,7 +24,7 @@ Status is one of: Proposed, Accepted, Superseded by ADR-N.
 - **Alternatives:** Temporal (too heavy), Graphile Worker or pg-boss (possible later self-hosted migration).
 
 ## ADR-004: SMS behind a provider adapter; link-based responses
-- **Date:** 2026-10-19 · **Status:** Proposed
+- **Date:** 2026-10-19 · **Status:** Superseded by ADR-009
 - **Context:** SMS pricing and delivery vary a lot by country. Two-way SMS is unreliable in many regions.
 - **Decision:** `SmsProvider` interface with a local aggregator as primary. Patient responses come through signed links, not SMS replies.
 - **Consequences:** Patients need a data connection to respond. That is acceptable, and SMS replies can be added later.
@@ -51,3 +51,21 @@ Status is one of: Proposed, Accepted, Superseded by ADR-N.
 - **Context:** Procedure types and follow-up schedules must not be fixed in code. The doctor edits them.
 - **Decision:** Procedures and protocols are data, editable in-app, archived instead of deleted. Each surgery booking stores a frozen JSON snapshot of its protocol.
 - **Consequences:** Edits never silently reshuffle existing patients' follow-ups. Re-planning an existing patient is an explicit action.
+
+## ADR-009: SMS-first with reply keywords; bilingual messages
+- **Date:** 2026-10-22 · **Status:** Accepted · **Supersedes:** ADR-004
+- **Context:** Many patients may not have smartphones, so link-only responses would exclude them. Dad wants every message in both Bangla and English.
+- **Decision:**
+  - SMS stays behind a `SmsProvider` adapter, but the gateway must support **inbound SMS**.
+  - Patients respond by replying with a number or letter. Links are optional extras.
+  - Every message is bilingual.
+  - Unanswered prompts fall back to a safe default, and the patient goes on the assistant's call list.
+- **Consequences:**
+  - Gateway choice is narrower.
+  - Replies must be matched to the right pending question per phone number: only one open question per patient at a time.
+  - Messages cost about 3–4 Unicode parts each.
+
+## ADR-010: Hard permission limits for the assistant
+- **Date:** 2026-10-22 · **Status:** Accepted · **Extends:** ADR-007
+- **Context:** Dad wants the assistant unable to define operation types or change patient contact info.
+- **Decision:** These are enforced in Postgres row-level security and cannot be granted to the assistant role. The assistant can still register new patients and choose from existing procedure types. Contact-info changes are audit-logged with old and new values.
